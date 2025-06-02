@@ -1,25 +1,25 @@
 # app/main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import generate_latest
+from starlette.responses import Response
+
 from .schema import LandmarkInput, PredictionResponse
 from .model import model, label_encoder
-from app.utils import process_landmarks, PredictionStabilizer
-from prometheus_fastapi_instrumentator import Instrumentator
-from prometheus_client import Summary, Gauge, generate_latest, CONTENT_TYPE_LATEST
-from fastapi.responses import Response
+from .utils import process_landmarks, PredictionStabilizer
+from .metrics import REQUEST_COUNT, ERROR_COUNT, PREDICTION_LATENCY, FEATURE_MEAN, FEATURE_STD
 
-# Model-related: track prediction latency
-prediction_latency = Summary('prediction_latency_seconds', 'Time spent processing prediction')
+# from prometheus_fastapi_instrumentator import Instrumentator
+# from fastapi.responses import Response
 
-# Data-related: track first feature value
-input_feature_0 = Gauge('input_feature_0_value', 'Value of the first input feature')
-
-stabilizer = PredictionStabilizer()
+import numpy as np
+import time
 
 app = FastAPI(title="Hand Gesture Recognition API")
+stabilizer = PredictionStabilizer()
 
-instrumentator = Instrumentator()
-instrumentator.instrument(app).expose(app)
+# instrumentator = Instrumentator()
+# instrumentator.instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,24 +30,54 @@ app.add_middleware(
 )
 
 
+# @app.get("/metrics")
+# @prediction_latency.time()
+# async def metrics():
+#     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 @app.get("/metrics")
-@prediction_latency.time()
-async def metrics():
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+def metrics():
+    return Response(generate_latest(), media_type="text/plain")
+
+# @app.post("/predict", response_model=PredictionResponse)
+# async def predict_gesture(request: LandmarkInput):
+#     try:
+#         features = process_landmarks(request.landmarks)  # Returns 63 features
+#         proba = model.predict_proba([features])[0]
+#         pred = model.predict([features])[0]
+
+#         stabilized_pred = stabilizer.stabilize(pred)
+#         gesture = label_encoder.inverse_transform([stabilized_pred])[0]
+        
+#         return {
+#             "gesture": gesture,
+#             "confidence": float(proba.max())
+#         }
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict", response_model=PredictionResponse)
-async def predict_gesture(request: LandmarkInput):
-    try:
-        features = process_landmarks(request.landmarks)  # Returns 63 features
-        proba = model.predict_proba([features])[0]
-        pred = model.predict([features])[0]
+def predict(request: LandmarkInput):
+    REQUEST_COUNT.inc()
+    start = time.time()
 
-        stabilized_pred = stabilizer.stabilize(pred)
-        gesture = label_encoder.inverse_transform([stabilized_pred])[0]
-        
-        return {
-            "gesture": gesture,
-            "confidence": float(proba.max())
-        }
+    try:
+        features = process_landmarks(request.landmarks)
+
+        # Log data metrics
+        FEATURE_MEAN.set(np.mean(features))
+        FEATURE_STD.set(np.std(features))
+
+        pred = model.predict([features])[0]
+        proba = model.predict_proba([features])[0].max()
+        gesture = label_encoder.inverse_transform([stabilizer.stabilize(pred)])[0]
+
+        latency = time.time() - start
+        PREDICTION_LATENCY.observe(latency)
+
+        return {"gesture": gesture, "confidence": float(proba)}
+    
     except Exception as e:
+        ERROR_COUNT.inc()
         raise HTTPException(status_code=500, detail=str(e))
