@@ -9,17 +9,11 @@ from .model import model, label_encoder
 from .utils import process_landmarks, PredictionStabilizer
 from .metrics import REQUEST_COUNT, ERROR_COUNT, PREDICTION_LATENCY, FEATURE_MEAN, FEATURE_STD
 
-# from prometheus_fastapi_instrumentator import Instrumentator
-# from fastapi.responses import Response
-
 import numpy as np
 import time
 
 app = FastAPI(title="Hand Gesture Recognition API")
 stabilizer = PredictionStabilizer()
-
-# instrumentator = Instrumentator()
-# instrumentator.instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,32 +24,9 @@ app.add_middleware(
 )
 
 
-# @app.get("/metrics")
-# @prediction_latency.time()
-# async def metrics():
-#     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-
 @app.get("/metrics")
 def metrics():
     return Response(generate_latest(), media_type="text/plain")
-
-# @app.post("/predict", response_model=PredictionResponse)
-# async def predict_gesture(request: LandmarkInput):
-#     try:
-#         features = process_landmarks(request.landmarks)  # Returns 63 features
-#         proba = model.predict_proba([features])[0]
-#         pred = model.predict([features])[0]
-
-#         stabilized_pred = stabilizer.stabilize(pred)
-#         gesture = label_encoder.inverse_transform([stabilized_pred])[0]
-        
-#         return {
-#             "gesture": gesture,
-#             "confidence": float(proba.max())
-#         }
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict", response_model=PredictionResponse)
 def predict(request: LandmarkInput):
